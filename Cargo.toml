@@ -6,5 +6,12 @@ edition = "2024"
 [dependencies]
 bevy = "0.16.1"
 bevy_rapier2d = "0.30.0"
+burn = "0.17.1"
 rand = "0.9.1"
 rapier2d = "0.26.1"
+
+[features]
+gui = []
+headless = []
+
+default = ["gui"]

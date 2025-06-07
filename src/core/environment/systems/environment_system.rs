@@ -11,7 +11,7 @@ pub struct RLState(pub Vec<f32>);
 #[derive(Resource, Default)]
 pub struct CurrentReward(pub f32);
 
-pub fn state_extraction_system(
+pub fn observe(
     environment: Res<Environment>,
     player_query: Query<(&Transform, &Velocity), With<Player>>, // Query player by its components
     goal_query: Query<&Transform, With<Goal>>,                  // Query goal by its components

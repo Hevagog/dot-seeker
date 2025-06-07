@@ -1,4 +1,6 @@
 use bevy::prelude::*;
+use bevy::sprite::{ColorMaterial, MeshMaterial2d};
+
 use bevy_rapier2d::prelude::*;
 use rand;
 
@@ -8,30 +10,41 @@ use core::environment::Environment;
 use core::environment::spawners::*;
 use core::environment::systems::environment_system::*;
 
-fn setup_environment_resources(mut commands: Commands) {
-    let player_entity = spawn_player(&mut commands, Vec2::new(0.0, 0.0), Collider::ball(25.0));
+fn setup_environment_resources(
+    mut commands: Commands,
+    meshes: Option<ResMut<Assets<Mesh>>>,
+    materials: Option<ResMut<Assets<ColorMaterial>>>,
+) {
+    let player_entity = spawn_player(&mut commands, Vec2::new(0.0, 0.0), Collider::ball(10.0));
     let goal_entity = spawn_goal(&mut commands, Vec2::new(200.0, 200.0));
+
+    if let (Some(mut meshes_res), Some(mut materials_res)) = (meshes, materials) {
+        commands.entity(goal_entity).insert((
+            Mesh2d(meshes_res.add(Circle::new(10.0))),
+            MeshMaterial2d(materials_res.add(Color::hsl(120.0, 1.0, 0.5))),
+        ));
+    }
 
     let wall_entities = vec![
         spawn_wall(
             &mut commands,
             Vec2::new(0.0, 300.0),
-            Collider::cuboid(400.0, 20.0),
+            Collider::cuboid(400.0, 10.0),
         ), // Top
         spawn_wall(
             &mut commands,
             Vec2::new(0.0, -300.0),
-            Collider::cuboid(400.0, 20.0),
+            Collider::cuboid(400.0, 10.0),
         ), // Bottom
         spawn_wall(
             &mut commands,
             Vec2::new(400.0, 0.0),
-            Collider::cuboid(20.0, 300.0),
+            Collider::cuboid(10.0, 300.0),
         ), // Right
         spawn_wall(
             &mut commands,
             Vec2::new(-400.0, 0.0),
-            Collider::cuboid(20.0, 300.0),
+            Collider::cuboid(10.0, 300.0),
         ), // Left
     ];
 
@@ -79,10 +92,20 @@ fn check_and_trigger_reset_system(
 struct ResetEvent;
 
 fn main() {
-    App::new()
-        .add_plugins(DefaultPlugins)
-        .add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0))
-        .add_plugins(RapierDebugRenderPlugin::default())
+    let mut app = App::new();
+
+    #[cfg(feature = "gui")]
+    {
+        app.add_plugins(DefaultPlugins)
+            .add_plugins(RapierDebugRenderPlugin::default());
+    }
+
+    #[cfg(feature = "headless")]
+    {
+        app.add_plugins(MinimalPlugins);
+    }
+
+    app.add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0))
         .add_event::<ResetEvent>() // Register the reset event
         .add_systems(Startup, (setup_graphics, setup_environment_resources))
         // RL Loop Systems - Order can be important.
@@ -90,9 +113,9 @@ fn main() {
         .add_systems(Update, agent_choose_action_system) // 1. Agent (or dummy) decides action
         .add_systems(Update, perform_action.after(agent_choose_action_system)) // 2. Apply action
         // 3. Physics step (Rapier runs automatically within Bevy's schedule)
-        .add_systems(Update, state_extraction_system.after(perform_action)) // 4. Observe new state
-        .add_systems(Update, reward_system.after(state_extraction_system)) // 5. Calculate reward
-        // .add_systems(Update, print_ball_altitude)
+        .add_systems(Update, observe.after(perform_action)) // 4. Observe new state
+        .add_systems(Update, reward_system.after(observe)) // 5. Calculate reward
+        .add_systems(Update, display_debug_info.after(reward_system)) // 5. Display debug info
         .add_systems(Update, check_and_trigger_reset_system.after(reward_system)) // 6. Check for reset conditions
         .add_systems(
             Update,
@@ -105,13 +128,15 @@ fn setup_graphics(mut commands: Commands) {
     commands.spawn(Camera2d);
 }
 
-fn print_ball_altitude(
-    environment: Option<Res<Environment>>, // Make it optional as it might not exist on first frames
-    positions: Query<&Transform, With<RigidBody>>,
-) {
-    if let Some(env) = environment {
-        if let Ok(player_transform) = positions.get(env.player) {
-            // println!("Player altitude: {}", player_transform.translation.y);
-        }
-    }
+fn display_reward(reward: Res<CurrentReward>) {
+    println!("Current Reward: {}", reward.0);
+}
+
+fn display_observation(state: Res<RLState>) {
+    println!("Current State: {:?}", state.0);
+}
+
+fn display_debug_info(reward: Res<CurrentReward>, state: Res<RLState>) {
+    display_reward(reward);
+    display_observation(state);
 }
