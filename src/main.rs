@@ -5,10 +5,12 @@ use bevy_rapier2d::prelude::*;
 use rand;
 
 mod core;
+mod dqn;
 use core::agent::*;
 use core::environment::Environment;
 use core::environment::spawners::*;
 use core::environment::systems::environment_system::*;
+use dqn::dqn_agent::DQNAgent;
 
 fn setup_environment_resources(
     mut commands: Commands,
@@ -60,6 +62,13 @@ fn setup_environment_resources(
     commands.insert_resource(CurrentReward::default());
 }
 
+fn setup_agent(mut commands: Commands) {
+    let observation_space = 6; // Example observation space size
+    let action_space = ActionSpace::Discrete(PlayerAction::COUNT); // Example action space size (Up, Down, Left, Right)
+    let agent = DQNAgent::new(observation_space, action_space);
+    commands.insert_resource(agent);
+}
+
 // Dummy system to simulate agent choosing an action (replace with actual agent logic)
 fn agent_choose_action_system(mut current_action: ResMut<Action>) {
     // For testing, cycle through actions or pick randomly
@@ -106,21 +115,45 @@ fn main() {
     }
 
     app.add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0))
-        .add_event::<ResetEvent>() // Register the reset event
-        .add_systems(Startup, (setup_graphics, setup_environment_resources))
-        // RL Loop Systems - Order can be important.
-        // Using .chain() or .before/.after for explicit ordering.
-        .add_systems(Update, agent_choose_action_system) // 1. Agent (or dummy) decides action
-        .add_systems(Update, perform_action.after(agent_choose_action_system)) // 2. Apply action
-        // 3. Physics step (Rapier runs automatically within Bevy's schedule)
-        .add_systems(Update, observe.after(perform_action)) // 4. Observe new state
-        .add_systems(Update, reward_system.after(observe)) // 5. Calculate reward
-        .add_systems(Update, display_debug_info.after(reward_system)) // 5. Display debug info
-        .add_systems(Update, check_and_trigger_reset_system.after(reward_system)) // 6. Check for reset conditions
+        .add_event::<ResetEvent>()
+        .add_systems(
+            Startup,
+            (setup_graphics, setup_environment_resources, setup_agent),
+        )
+        .add_systems(
+            Update,
+            (
+                // 1. Observe current state (ensure 'observe' runs before agent decision)
+                observe,
+                // 2. Agent uses observed state to decide action
+                //    Using .after() to ensure 'observe' has updated RLState
+                dqn_agent_decision_system.after(observe),
+                // 3. Apply the chosen action to the environment
+                perform_action.after(dqn_agent_decision_system),
+                // 4. Calculate reward based on the action's outcome
+                reward_system.after(perform_action),
+                // 5. Agent learns from the experience (state, action, reward, next_state)
+                //    This system would need access to:
+                //    - DQNAgent
+                //    - The state before the action (or store it)
+                //    - The action taken (from Action resource)
+                //    - The reward received (from CurrentReward resource)
+                //    - The new state after the action (from RLState, after a new observe, or pass explicitly)
+                //    - Done flag
+                //    For simplicity, let's assume a basic train call for now.
+                //    A more complete agent_learn_system would be more complex.
+                // agent_learn_system.after(reward_system), // Placeholder for agent training
+                // 6. Display debug info
+                display_debug_info.after(reward_system),
+                // 7. Check for reset conditions
+                check_and_trigger_reset_system.after(reward_system),
+            )
+                .chain(),
+        )
         .add_systems(
             Update,
             reset_environment_system.run_if(on_event::<ResetEvent>),
-        ) // 7. Reset if event occurs
+        )
         .run();
 }
 
@@ -139,4 +172,14 @@ fn display_observation(state: Res<RLState>) {
 fn display_debug_info(reward: Res<CurrentReward>, state: Res<RLState>) {
     display_reward(reward);
     display_observation(state);
+}
+
+pub fn dqn_agent_decision_system(
+    mut agent: ResMut<DQNAgent>,
+    current_state: Res<RLState>,
+    mut current_action: ResMut<Action>,
+) {
+    let action = agent.choose_action(&current_state.0);
+    current_action.0 = action;
+    agent.update_exploration_rate();
 }

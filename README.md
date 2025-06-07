@@ -10,3 +10,12 @@ The primary goal of this project is to create a simple yet flexible environment 
 *   **Bevy Engine**: A refreshingly simple data-driven game engine built in Rust. It provides the Entity Component System (ECS) framework, rendering, input handling, and other game-related functionalities.
 *   **Rapier2D**: A 2D physics engine for Rust, used here to handle collisions and movement dynamics for the player and walls.
 * **Burn**: TODO
+
+
+## Running the Project Headless
+
+To run the Dot Seeker project headless:
+
+```bash
+cargo run --no-default-features --features headless
+```
