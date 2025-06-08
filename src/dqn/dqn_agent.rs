@@ -1,17 +1,22 @@
 use crate::core::agent::{ActionSpace, PlayerAction};
 use bevy::prelude::*;
 
+use crate::dqn::dqn_net::*;
+
 #[derive(Resource, Debug)]
 pub struct DQNAgent {
     observation_space: usize,
     action_space: ActionSpace,
     episodes: usize,
-    batch_size: usize,
+    pub batch_size: usize,
     learning_rate: f64,
-    discount_factor: f64,
-    exploration_rate: f64,
-    exploration_decay: f64,
+    pub gamma: f64,
+    eps_start: f64,
+    eps_end: f64,
+    eps_decay: usize,
     replay_buffer: Vec<(Vec<f64>, usize, f64, Vec<f64>, bool)>,
+    steps_done: usize,
+    // dqn_model: DQNModel<burn::backend::DefaultBackend>,
 }
 
 impl DQNAgent {
@@ -27,10 +32,12 @@ impl DQNAgent {
             episodes: 0,
             batch_size: 32,
             learning_rate: 0.001,
-            discount_factor: 0.99,
-            exploration_rate: 1.0,
-            exploration_decay: 0.995,
+            gamma: 0.99,
+            eps_start: 0.9,
+            eps_end: 0.05,
+            eps_decay: 1000,
             replay_buffer: Vec::new(),
+            steps_done: 0,
         }
     }
 
@@ -40,7 +47,14 @@ impl DQNAgent {
             .n_discrete()
             .expect("Action space must be discrete");
 
-        let action_index = if rand::random::<f64>() < self.exploration_rate {
+        let current_eps = self.eps_end
+            + (self.eps_start - self.eps_end)
+                * (-1. * self.steps_done as f64 / self.eps_decay as f64)
+                    .exp()
+                    .max(0.0);
+
+        let action_index = if rand::random::<f64>() < current_eps {
+            // Explore: choose a random action from the action space.
             self.action_space.sample_index()
         } else {
             // Exploit: choose the best action based on the current Q-values for the state.
@@ -86,12 +100,6 @@ impl DQNAgent {
                 "Training with state: {:?}, action: {}, reward: {}, next_state: {:?}, done: {}",
                 state, action, reward, next_state, done
             );
-        }
-    }
-
-    pub fn update_exploration_rate(&mut self) {
-        if self.exploration_rate > 0.01 {
-            self.exploration_rate *= self.exploration_decay;
         }
     }
 }

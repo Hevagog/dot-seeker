@@ -2,7 +2,6 @@ use bevy::prelude::*;
 use bevy::sprite::{ColorMaterial, MeshMaterial2d};
 
 use bevy_rapier2d::prelude::*;
-use rand;
 
 mod core;
 mod dqn;
@@ -67,23 +66,6 @@ fn setup_agent(mut commands: Commands) {
     let action_space = ActionSpace::Discrete(PlayerAction::COUNT); // Example action space size (Up, Down, Left, Right)
     let agent = DQNAgent::new(observation_space, action_space);
     commands.insert_resource(agent);
-}
-
-// Dummy system to simulate agent choosing an action (replace with actual agent logic)
-fn agent_choose_action_system(mut current_action: ResMut<Action>) {
-    // For testing, cycle through actions or pick randomly
-    // In a real scenario, your RL agent logic would set this.
-    // This is just a placeholder.
-    if rand::random::<f32>() < 0.05 {
-        // Occasionally change action
-        match rand::random::<u8>() % 4 {
-            0 => current_action.0 = PlayerAction::Up,
-            1 => current_action.0 = PlayerAction::Down,
-            2 => current_action.0 = PlayerAction::Left,
-            3 => current_action.0 = PlayerAction::Right,
-            _ => (), // Should never happen
-        }
-    }
 }
 
 fn check_and_trigger_reset_system(
@@ -181,5 +163,4 @@ pub fn dqn_agent_decision_system(
 ) {
     let action = agent.choose_action(&current_state.0);
     current_action.0 = action;
-    agent.update_exploration_rate();
 }
