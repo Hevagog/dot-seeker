@@ -14,8 +14,8 @@ pub struct DQNModel<B: Backend> {
 
 #[derive(Config, Debug)]
 pub struct ModelConfig {
-    input_shape: usize,
-    output_shape: usize,
+    pub input_shape: usize,
+    pub output_shape: usize,
 }
 
 impl ModelConfig {

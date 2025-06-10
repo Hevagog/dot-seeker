@@ -62,6 +62,3 @@ impl ActionSpace {
         }
     }
 }
-
-#[derive(Resource, Default)]
-pub struct Action(pub PlayerAction);

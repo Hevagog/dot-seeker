@@ -1,11 +1,11 @@
-use crate::core::agent::{Action, PlayerAction};
+use crate::core::agent::PlayerAction;
+use crate::core::bevy_types::{Action, CurrentReward, Environment, RLState};
 use crate::core::environment::components::*;
-use crate::core::environment::{CurrentReward, Environment, RLState};
 
 use bevy::prelude::*;
 use bevy_rapier2d::prelude::*;
 
-pub fn observe(
+pub fn observe_system(
     environment: Res<Environment>,
     player_query: Query<(&Transform, &Velocity), With<Player>>, // Query player by its components
     goal_query: Query<&Transform, With<Goal>>,                  // Query goal by its components
@@ -53,6 +53,8 @@ pub fn reward_system(
 
 pub fn reset_environment_system(
     environment: Res<Environment>,
+    mut rl_state: ResMut<RLState>,
+    mut current_reward: ResMut<CurrentReward>,
     mut queries: ParamSet<(
         Query<(&mut Transform, &mut Velocity), With<Player>>,
         Query<&mut Transform, With<Goal>>,
@@ -75,9 +77,11 @@ pub fn reset_environment_system(
         // goal_transform.translation = Vec3::new(new_x, new_y, 0.0);
         goal_transform.translation = Vec3::new(200.0, 200.0, 0.0);
     }
+    rl_state.0.clear();
+    current_reward.0 = 0.0;
 }
 
-pub fn perform_action(
+pub fn perform_action_system(
     current_action: Res<Action>,
     mut player_query: Query<&mut Velocity, With<Player>>,
     environment: Res<Environment>,

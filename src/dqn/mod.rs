@@ -6,21 +6,27 @@ pub mod dqn_training;
 
 use crate::dqn::dqn_net::DQNModel;
 use bevy::prelude::*;
-use burn::optim::Adam;
-use burn::prelude::*;
-use burn::tensor::backend::AutodiffBackend;
+use burn::optim::AdamConfig;
+use burn::optim::adaptor::OptimizerAdaptor;
+use burn::tensor::backend::{AutodiffBackend, Backend};
+use std::sync::{Arc, Mutex};
 
 #[derive(Resource)]
-pub struct PolicyNet<B: AutodiffBackend>(pub DQNModel<B>);
+pub struct PolicyNet<B: Backend>(pub Arc<Mutex<DQNModel<B>>>);
 
 #[derive(Resource)]
-pub struct TargetNet<B: AutodiffBackend>(pub DQNModel<B>);
+pub struct TargetNet<B: Backend>(pub Arc<Mutex<DQNModel<B>>>);
 
 #[derive(Resource)]
-pub struct ModelOptimizer(pub Adam);
+pub struct DqnOptimizer(pub AdamConfig);
 
 #[derive(Resource, Default)]
 pub struct EpisodeDone(pub bool);
 
 #[derive(Resource, Clone)]
 pub struct BurnDevice<B: Backend>(pub B::Device);
+
+#[derive(Resource)]
+pub struct ModelOptimizer<B: AutodiffBackend>(
+    pub Arc<Mutex<OptimizerAdaptor<burn::optim::Adam, DQNModel<B>, B>>>,
+);

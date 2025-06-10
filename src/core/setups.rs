@@ -4,8 +4,8 @@ use bevy::sprite::{ColorMaterial, MeshMaterial2d};
 use bevy_rapier2d::prelude::*;
 
 use crate::core::agent::*;
+use crate::core::bevy_types::{Action, CurrentReward, Environment, RLState};
 use crate::core::environment::spawners::*;
-use crate::core::environment::{CurrentReward, Environment, RLState};
 use crate::dqn::dqn_agent::DQNAgent;
 
 pub fn setup_environment_resources(

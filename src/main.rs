@@ -1,89 +1,74 @@
+#![recursion_limit = "256"]
+
+use crate::dqn::dqn_net::DQNModel;
 use bevy::prelude::*;
-use bevy::sprite::{ColorMaterial, MeshMaterial2d};
 
 use bevy_rapier2d::prelude::*;
+use burn::optim::AdamConfig;
+use burn::prelude::*;
 
 mod core;
 mod dqn;
-use core::agent::*;
-use core::environment::Environment;
-use core::environment::spawners::*;
+
+use crate::core::agent::{self, ActionSpace, PlayerAction};
+use crate::core::setups::{setup_agent, setup_environment_resources};
+use crate::dqn::dqn_agent::DQNAgent;
+use crate::dqn::dqn_memory::DQNMemory;
+use crate::dqn::dqn_net::ModelConfig;
+use crate::dqn::dqn_optim::polyak_update;
+use crate::dqn::{PolicyNet, TargetNet};
+use std::sync::{Arc, Mutex};
+
+use crate::dqn::*;
+use burn::backend::{Autodiff, Wgpu};
+use core::bevy_types::{Action, CurrentReward, EpisodeDoneEvent, RLState};
 use core::environment::systems::environment_system::*;
-use dqn::dqn_agent::DQNAgent;
 
-fn setup_environment_resources(
-    mut commands: Commands,
-    meshes: Option<ResMut<Assets<Mesh>>>,
-    materials: Option<ResMut<Assets<ColorMaterial>>>,
-) {
-    let player_entity = spawn_player(&mut commands, Vec2::new(0.0, 0.0), Collider::ball(10.0));
-    let goal_entity = spawn_goal(&mut commands, Vec2::new(200.0, 200.0));
+type MyBackend = Wgpu<f32, i32>;
+type MyAutodiffBackend = Autodiff<MyBackend>;
 
-    if let (Some(mut meshes_res), Some(mut materials_res)) = (meshes, materials) {
-        commands.entity(goal_entity).insert((
-            Mesh2d(meshes_res.add(Circle::new(10.0))),
-            MeshMaterial2d(materials_res.add(Color::hsl(120.0, 1.0, 0.5))),
-        ));
-    }
-
-    let wall_entities = vec![
-        spawn_wall(
-            &mut commands,
-            Vec2::new(0.0, 300.0),
-            Collider::cuboid(400.0, 10.0),
-        ), // Top
-        spawn_wall(
-            &mut commands,
-            Vec2::new(0.0, -300.0),
-            Collider::cuboid(400.0, 10.0),
-        ), // Bottom
-        spawn_wall(
-            &mut commands,
-            Vec2::new(400.0, 0.0),
-            Collider::cuboid(10.0, 300.0),
-        ), // Right
-        spawn_wall(
-            &mut commands,
-            Vec2::new(-400.0, 0.0),
-            Collider::cuboid(10.0, 300.0),
-        ), // Left
-    ];
-
-    commands.insert_resource(Environment {
-        player: player_entity,
-        player_initial_spawn_position: Vec2::new(0.0, 0.0),
-        walls: wall_entities,
-        goal: goal_entity,
-    });
-
-    commands.insert_resource(Action::default());
-    commands.insert_resource(RLState::default());
-    commands.insert_resource(CurrentReward::default());
-}
-
-fn setup_agent(mut commands: Commands) {
-    let observation_space = 6; // Example observation space size
-    let action_space = ActionSpace::Discrete(PlayerAction::COUNT); // Example action space size (Up, Down, Left, Right)
-    let agent = DQNAgent::new(observation_space, action_space);
-    commands.insert_resource(agent);
-}
-
-fn check_and_trigger_reset_system(
-    reward: Res<CurrentReward>,
-    mut ev_reset: EventWriter<ResetEvent>,
-) {
+fn check_done_system(reward: Res<CurrentReward>, mut ev_reset: EventWriter<EpisodeDoneEvent>) {
     if reward.0 >= 1.0 {
-        // Assuming reward 1.0 means goal reached
         println!("Goal reached! Requesting reset.");
-        ev_reset.write(ResetEvent);
+        ev_reset.write(EpisodeDoneEvent);
     }
 }
-
-#[derive(Event)]
-struct ResetEvent;
-
 fn main() {
+    // Bevy app setup
     let mut app = App::new();
+    // Initialize the learning agent and environment and backend
+
+    let burn_device = <MyAutodiffBackend as Backend>::Device::default(); // Use MyAutodiffBackend for device if model init needs it
+
+    let observation_space = 4;
+    let action_space = ActionSpace::Discrete(PlayerAction::COUNT); // Up, Down, Left, Right
+    let agent = DQNAgent::new(observation_space, action_space);
+
+    app.insert_resource(agent)
+        .insert_resource(DQNMemory::new(10000));
+
+    let model_config = ModelConfig {
+        input_shape: observation_space,
+        output_shape: PlayerAction::COUNT,
+    };
+
+    let policy_model = model_config.init::<MyAutodiffBackend>(&burn_device);
+    let target_model = model_config.init::<MyAutodiffBackend>(&burn_device);
+
+    // It's good practice to ensure the target network starts as a copy of the policy network
+    let mut target_model_for_polyak = target_model.clone();
+    polyak_update(&policy_model, &mut target_model_for_polyak, 1.0);
+
+    app.insert_resource(PolicyNet(Arc::new(Mutex::new(policy_model))))
+        .insert_resource(TargetNet(Arc::new(Mutex::new(target_model_for_polyak))));
+
+    let adam_config = AdamConfig::new();
+    app.insert_resource(ModelOptimizer(Arc::new(Mutex::new(
+        adam_config.init::<MyAutodiffBackend, DQNModel<MyAutodiffBackend>>(),
+    ))))
+    .insert_resource(RLState(vec![0.0; observation_space]))
+    .insert_resource(CurrentReward(0.0))
+    .insert_resource(Action(PlayerAction::default()));
 
     #[cfg(feature = "gui")]
     {
@@ -97,7 +82,7 @@ fn main() {
     }
 
     app.add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0))
-        .add_event::<ResetEvent>()
+        .add_event::<EpisodeDoneEvent>()
         .add_systems(
             Startup,
             (setup_graphics, setup_environment_resources, setup_agent),
@@ -105,38 +90,25 @@ fn main() {
         .add_systems(
             Update,
             (
-                // 1. Observe current state (ensure 'observe' runs before agent decision)
-                observe,
-                // 2. Agent uses observed state to decide action
-                //    Using .after() to ensure 'observe' has updated RLState
-                dqn_agent_decision_system.after(observe),
-                // 3. Apply the chosen action to the environment
-                perform_action.after(dqn_agent_decision_system),
-                // 4. Calculate reward based on the action's outcome
-                reward_system.after(perform_action),
-                // 5. Agent learns from the experience (state, action, reward, next_state)
-                //    This system would need access to:
-                //    - DQNAgent
-                //    - The state before the action (or store it)
-                //    - The action taken (from Action resource)
-                //    - The reward received (from CurrentReward resource)
-                //    - The new state after the action (from RLState, after a new observe, or pass explicitly)
-                //    - Done flag
-                //    For simplicity, let's assume a basic train call for now.
-                //    A more complete agent_learn_system would be more complex.
-                // agent_learn_system.after(reward_system), // Placeholder for agent training
-                // 6. Display debug info
-                display_debug_info.after(reward_system),
-                // 7. Check for reset conditions
-                check_and_trigger_reset_system.after(reward_system),
+                perform_action_system,
+                observe_system.after(perform_action_system),
+                reward_system.after(observe_system),
+                check_done_system.after(reward_system),
+                display_debug_info.after(check_done_system),
             )
                 .chain(),
         )
         .add_systems(
             Update,
-            reset_environment_system.run_if(on_event::<ResetEvent>),
-        )
-        .run();
+            reset_environment_system.run_if(on_event::<EpisodeDoneEvent>),
+        );
+
+    // ------ Start Training ------
+    let num_training_episodes = 1000;
+    crate::dqn::dqn_training::run_training_episodes::<MyAutodiffBackend>(
+        &mut app,
+        num_training_episodes,
+    );
 }
 
 fn setup_graphics(mut commands: Commands) {
@@ -157,10 +129,19 @@ fn display_debug_info(reward: Res<CurrentReward>, state: Res<RLState>) {
 }
 
 pub fn dqn_agent_decision_system(
-    mut agent: ResMut<DQNAgent>,
-    current_state: Res<RLState>,
+    agent: Res<DQNAgent>,
+    current_rl_state: Res<RLState>,
+    policy_net_resource: Res<PolicyNet<MyAutodiffBackend>>,
+    burn_device_resource: Res<BurnDevice<MyAutodiffBackend>>,
     mut current_action: ResMut<Action>,
 ) {
-    let action = agent.choose_action(&current_state.0);
-    current_action.0 = action;
+    let policy_net_guard = policy_net_resource.0.lock().unwrap();
+
+    let policy_model = &*policy_net_guard;
+    let device = &burn_device_resource.0;
+
+    // Choose action
+    let chosen_player_action = agent.choose_action(&current_rl_state.0, policy_model, device);
+
+    current_action.0 = chosen_player_action;
 }
