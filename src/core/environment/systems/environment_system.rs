@@ -1,15 +1,9 @@
 use crate::core::agent::{Action, PlayerAction};
-use crate::core::environment::Environment;
 use crate::core::environment::components::*;
+use crate::core::environment::{CurrentReward, Environment, RLState};
 
 use bevy::prelude::*;
 use bevy_rapier2d::prelude::*;
-
-#[derive(Resource, Default)]
-pub struct RLState(pub Vec<f32>);
-
-#[derive(Resource, Default)]
-pub struct CurrentReward(pub f32);
 
 pub fn observe(
     environment: Res<Environment>,
@@ -58,7 +52,6 @@ pub fn reward_system(
 }
 
 pub fn reset_environment_system(
-    _commands: Commands,
     environment: Res<Environment>,
     mut queries: ParamSet<(
         Query<(&mut Transform, &mut Velocity), With<Player>>,

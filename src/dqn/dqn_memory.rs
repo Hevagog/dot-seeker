@@ -1,3 +1,4 @@
+use bevy::prelude::*;
 use rand::Rng;
 
 pub struct Memory_Record {
@@ -8,6 +9,7 @@ pub struct Memory_Record {
     pub done: bool,
 }
 
+#[derive(Resource)]
 pub struct DQNMemory {
     pub replay_buffer: Vec<Memory_Record>,
     pub max_size: usize,
