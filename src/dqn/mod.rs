@@ -20,9 +20,6 @@ pub struct TargetNet<B: Backend>(pub Arc<Mutex<DQNModel<B>>>);
 #[derive(Resource)]
 pub struct DqnOptimizer(pub AdamConfig);
 
-#[derive(Resource, Default)]
-pub struct EpisodeDone(pub bool);
-
 #[derive(Resource, Clone)]
 pub struct BurnDevice<B: Backend>(pub B::Device);
 

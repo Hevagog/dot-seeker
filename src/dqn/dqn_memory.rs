@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use rand::Rng;
 
-pub struct Memory_Record {
+pub struct MemoryRecord {
     pub state: Vec<f32>,
     pub action: usize,
     pub next_state: Vec<f32>,
@@ -11,7 +11,7 @@ pub struct Memory_Record {
 
 #[derive(Resource)]
 pub struct DQNMemory {
-    pub replay_buffer: Vec<Memory_Record>,
+    pub replay_buffer: Vec<MemoryRecord>,
     pub max_size: usize,
 }
 
@@ -31,7 +31,7 @@ impl DQNMemory {
         next_state: Vec<f32>,
         done: bool,
     ) {
-        let record = Memory_Record {
+        let record = MemoryRecord {
             state,
             action,
             next_state,
@@ -44,7 +44,7 @@ impl DQNMemory {
         }
     }
 
-    pub fn sample(&self, batch_size: usize) -> Vec<&Memory_Record> {
+    pub fn sample(&self, batch_size: usize) -> Vec<&MemoryRecord> {
         let mut rng = rand::rng();
         (0..batch_size)
             .map(|_| {

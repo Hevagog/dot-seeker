@@ -1,4 +1,3 @@
-use bevy::prelude::Resource;
 use rand::Rng;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

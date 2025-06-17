@@ -1,10 +1,9 @@
 use crate::dqn::dqn_agent::*;
 use crate::dqn::dqn_memory::*;
 use crate::dqn::dqn_net::*;
-use burn::module::Module;
 use burn::nn::loss::{HuberLossConfig, Reduction};
 use burn::optim::adaptor::OptimizerAdaptor;
-use burn::optim::{AdamConfig, GradientsParams, Optimizer};
+use burn::optim::{GradientsParams, Optimizer};
 use burn::tensor::TensorData;
 use burn::tensor::backend::AutodiffBackend;
 
@@ -40,9 +39,8 @@ pub fn optimize_model<B: AutodiffBackend>(
             next_states.extend(tr.next_state.clone());
         }
     }
-
     let b = dqn_agent.batch_size;
-    let obs_size = policy_net.linear1.weight.dims()[1] as usize;
+    let obs_size = dqn_agent.observation_space;
 
     // Tensors
     let state = Tensor::<B, 2>::from_data(TensorData::new(states, [b, obs_size]), device);
@@ -51,10 +49,13 @@ pub fn optimize_model<B: AutodiffBackend>(
 
     let mut next_state = Tensor::<B, 2>::zeros([b, obs_size], device);
     if !mask_indices.is_empty() {
-        let idx = Tensor::<B, 2, Int>::from_data(
-            TensorData::new(mask_indices.clone(), [mask_indices.len(), 1]),
+        let row_indices_tensor = Tensor::<B, 1, Int>::from_data(
+            TensorData::new(mask_indices.clone(), [mask_indices.len()]),
             device,
         );
+        let idx_column_vector = row_indices_tensor.reshape([mask_indices.len(), 1]);
+        let idx = idx_column_vector.repeat(&[0, obs_size]);
+
         let tmp = Tensor::<B, 2>::from_data(
             TensorData::new(next_states, [mask_indices.len(), obs_size]),
             device,
@@ -68,7 +69,8 @@ pub fn optimize_model<B: AutodiffBackend>(
 
     // Q_target
     let next_q = target_net.forward(next_state);
-    let next_max = next_q.max_dim(1).unsqueeze_dim::<2>(1); // shape [b,1]
+    let (next_max, _next_max_indices) = next_q.max_dim_with_indices(1);
+
     let target = reward + next_max * dqn_agent.gamma;
 
     // Compute Huber loss

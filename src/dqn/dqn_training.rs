@@ -111,6 +111,7 @@ where
         }
 
         {
+            // TODO: switch to system state
             let agent_config = app.world().get_resource::<DQNAgent>().unwrap();
             let policy_net_res_immut = app.world().get_resource::<PolicyNet<B>>().unwrap();
             let target_net_res_mut = app.world().get_resource::<TargetNet<B>>().unwrap();

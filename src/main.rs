@@ -10,7 +10,7 @@ use burn::prelude::*;
 mod core;
 mod dqn;
 
-use crate::core::agent::{self, ActionSpace, PlayerAction};
+use crate::core::agent::{ActionSpace, PlayerAction};
 use crate::core::setups::{setup_agent, setup_environment_resources};
 use crate::dqn::dqn_agent::DQNAgent;
 use crate::dqn::dqn_memory::DQNMemory;
@@ -21,18 +21,24 @@ use std::sync::{Arc, Mutex};
 
 use crate::dqn::*;
 use burn::backend::{Autodiff, Wgpu};
-use core::bevy_types::{Action, CurrentReward, EpisodeDoneEvent, RLState};
+use core::bevy_types::{Action, CurrentReward, EpisodeDoneEvent, EpisodeDoneFlag, RLState};
 use core::environment::systems::environment_system::*;
 
 type MyBackend = Wgpu<f32, i32>;
 type MyAutodiffBackend = Autodiff<MyBackend>;
 
-fn check_done_system(reward: Res<CurrentReward>, mut ev_reset: EventWriter<EpisodeDoneEvent>) {
+fn check_done_system(
+    reward: Res<CurrentReward>,
+    mut ev_reset: EventWriter<EpisodeDoneEvent>,
+    mut episode_done_flag: ResMut<EpisodeDoneFlag>, // Add this parameter
+) {
     if reward.0 >= 1.0 {
-        println!("Goal reached! Requesting reset.");
+        println!("Goal reached! Requesting reset and setting flag.");
+        episode_done_flag.0 = true;
         ev_reset.write(EpisodeDoneEvent);
     }
 }
+
 fn main() {
     // Bevy app setup
     let mut app = App::new();
@@ -40,7 +46,7 @@ fn main() {
 
     let burn_device = <MyAutodiffBackend as Backend>::Device::default(); // Use MyAutodiffBackend for device if model init needs it
 
-    let observation_space = 4;
+    let observation_space = 6;
     let action_space = ActionSpace::Discrete(PlayerAction::COUNT); // Up, Down, Left, Right
     let agent = DQNAgent::new(observation_space, action_space);
 
@@ -68,7 +74,9 @@ fn main() {
     ))))
     .insert_resource(RLState(vec![0.0; observation_space]))
     .insert_resource(CurrentReward(0.0))
-    .insert_resource(Action(PlayerAction::default()));
+    .insert_resource(Action(PlayerAction::default()))
+    .insert_resource(BurnDevice::<MyAutodiffBackend>(burn_device))
+    .insert_resource(EpisodeDoneFlag(false));
 
     #[cfg(feature = "gui")]
     {

@@ -23,7 +23,7 @@ impl ModelConfig {
         DQNModel {
             linear1: LinearConfig::new(self.input_shape, 64).init(device),
             relu1: Relu::new(),
-            linear2: LinearConfig::new(128, 64).init(device),
+            linear2: LinearConfig::new(64, 64).init(device),
             relu2: Relu::new(),
             linear3: LinearConfig::new(64, self.output_shape).init(device),
         }

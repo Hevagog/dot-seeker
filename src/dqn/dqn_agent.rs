@@ -66,7 +66,7 @@ impl DQNAgent {
                 device,
             );
             let q_values = policy_net.forward(state_tensor);
-            let action_tensor = q_values.argmax(1).squeeze::<1>(1);
+            let action_tensor = q_values.argmax(1);
             action_tensor.into_scalar().to_usize()
         };
         PlayerAction::from(action_index)
