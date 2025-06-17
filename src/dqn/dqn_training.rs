@@ -1,70 +1,135 @@
 use crate::dqn::dqn_agent::*;
 use crate::dqn::dqn_memory::*;
-use crate::dqn::dqn_net::*;
-use burn::prelude::*;
-use burn::tensor::TensorData;
+use crate::dqn::dqn_optim::*;
+use crate::dqn::*;
 
-pub fn optimize_model<B: Backend>(
-    dqn_memory: &mut DQNMemory,
-    policy_net: &DQNModel<B>,
-    target_net: &DQNModel<B>,
-    dqn_agent: &mut DQNAgent,
-    // optimizer: &mut burn::optim::Optimizer<B>,
-) {
-    if dqn_memory.len() < dqn_agent.batch_size {
-        return; // Not enough samples to train
+use crate::core::bevy_types::{
+    Action as BevyAction, CurrentReward, EpisodeDoneEvent, EpisodeDoneFlag, RLState,
+};
+use bevy::ecs::system::SystemParam;
+use bevy::ecs::system::SystemState;
+use bevy::prelude::*;
+use bevy::prelude::{App, Res, ResMut};
+use burn::prelude::Backend;
+use burn::tensor::backend::AutodiffBackend;
+use std::marker::PhantomData;
+
+#[derive(SystemParam)]
+struct OptimizeModelParams<'w, 's, B: AutodiffBackend + 'static> {
+    memory: ResMut<'w, DQNMemory>,
+    agent_config: Res<'w, DQNAgent>,
+    policy_net: ResMut<'w, PolicyNet<B>>,
+    target_net: Res<'w, TargetNet<B>>,
+    optimizer: ResMut<'w, ModelOptimizer<B>>,
+    _phantom_s: PhantomData<&'s ()>,
+    _phantom_b: PhantomData<B>,
+}
+
+pub fn run_training_episodes<B: AutodiffBackend>(app: &mut App, num_episodes: usize)
+where
+    B: Backend,
+{
+    let mut optimize_params_state: SystemState<OptimizeModelParams<B>> =
+        SystemState::new(app.world_mut());
+
+    for _episode_i in 0..num_episodes {
+        // --- RESET ENVIRONMENT ---
+        app.world_mut().send_event(EpisodeDoneEvent);
+        // Reset our loop's done flag, which is read from EpisodeDoneFlag resource
+        app.world_mut()
+            .get_resource_mut::<EpisodeDoneFlag>()
+            .unwrap()
+            .0 = false;
+        app.update(); // Run Bevy systems: reset_environment_system, then observe_system
+
+        let mut current_state_vec = app.world().get_resource::<RLState>().unwrap().0.clone();
+        let mut total_episode_reward = 0.0;
+
+        loop {
+            // --- AGENT CHOOSES ACTION ---
+            let chosen_action = {
+                let agent_res = app.world().get_resource::<DQNAgent>().unwrap();
+                let policy_net_res = app.world().get_resource::<PolicyNet<B>>().unwrap();
+                let device_res = app.world().get_resource::<BurnDevice<B>>().unwrap();
+
+                let policy_guard = policy_net_res.0.lock().unwrap(); // Lock Mutex
+                agent_res.choose_action(&current_state_vec, &*policy_guard, &device_res.0)
+            };
+
+            // --- PERFORM ACTION IN BEVY ENVIRONMENT ---
+            app.world_mut().get_resource_mut::<BevyAction>().unwrap().0 = chosen_action;
+            app.update(); // Run Bevy systems: perform_action, physics, observe, reward, check_done
+
+            // --- OBSERVE RESULTS FROM BEVY ---
+            let next_state_vec = app.world().get_resource::<RLState>().unwrap().0.clone();
+            let reward = app.world().get_resource::<CurrentReward>().unwrap().0;
+            let done = app.world().get_resource::<EpisodeDoneFlag>().unwrap().0;
+
+            total_episode_reward += reward;
+
+            // --- STORE EXPERIENCE ---
+            {
+                let mut memory_res = app.world_mut().get_resource_mut::<DQNMemory>().unwrap();
+                memory_res.store_experience(
+                    current_state_vec.clone(),
+                    chosen_action.into(),
+                    reward,
+                    next_state_vec.clone(),
+                    done,
+                );
+            }
+
+            current_state_vec = next_state_vec;
+
+            // --- AGENT LEARNING STEP (OPTIMIZE MODEL) ---
+            {
+                let mut params = optimize_params_state.get_mut(app.world_mut());
+
+                if params.memory.len() >= params.agent_config.batch_size {
+                    let mut policy_guard_mut = params.policy_net.0.lock().unwrap();
+                    let target_guard_immut = params.target_net.0.lock().unwrap();
+                    let mut optimizer_guard_mut = params.optimizer.0.lock().unwrap();
+
+                    optimize_model(
+                        &mut params.memory,
+                        &mut *policy_guard_mut,
+                        &*target_guard_immut,
+                        &params.agent_config,
+                        &mut *optimizer_guard_mut,
+                    );
+                }
+            }
+
+            app.world_mut()
+                .get_resource_mut::<DQNAgent>()
+                .unwrap()
+                .increment_step();
+
+            if done {
+                break;
+            }
+        }
+
+        {
+            let agent_config = app.world().get_resource::<DQNAgent>().unwrap();
+            let policy_net_res_immut = app.world().get_resource::<PolicyNet<B>>().unwrap();
+            let target_net_res_mut = app.world().get_resource::<TargetNet<B>>().unwrap();
+
+            let policy_guard_immut = policy_net_res_immut.0.lock().unwrap();
+            let mut target_guard_mut = target_net_res_mut.0.lock().unwrap();
+
+            polyak_update(
+                &*policy_guard_immut,
+                &mut *target_guard_mut,
+                agent_config.tau,
+            );
+        }
+
+        let mut agent_mut_res = app.world_mut().get_resource_mut::<DQNAgent>().unwrap();
+        agent_mut_res.episodes += 1;
+        println!(
+            "Episode: {}, Total Reward: {:.2}, Steps Done: {}",
+            agent_mut_res.episodes, total_episode_reward, agent_mut_res.steps_done
+        );
     }
-    let device = &policy_net.linear1.weight.device();
-    let transitions = dqn_memory.sample(dqn_agent.batch_size);
-    let mut batch = Vec::new();
-    for transition in transitions {
-        batch.push((
-            transition.state.clone(),
-            transition.action,
-            transition.reward,
-            transition.next_state.clone(),
-            transition.done,
-        ));
-    }
-    let non_terminal_mask: Vec<bool> = batch.iter().map(|(_, _, _, _, done)| !done).collect();
-    let non_terminal_next_states: Vec<Vec<f32>> = batch
-        .iter()
-        .filter(|(_, _, _, _, done)| !done)
-        .map(|(_, _, _, next_state, _)| next_state.clone())
-        .collect();
-
-    let state_batch_vecs: Vec<Vec<f32>> = batch
-        .iter()
-        .map(|(state, _, _, _, _)| state.clone())
-        .collect();
-    let action_batch: Vec<usize> = batch.iter().map(|(_, action, _, _, _)| *action).collect();
-    let reward_batch: Vec<f32> = batch.iter().map(|(_, _, reward, _, _)| *reward).collect();
-    // let action_tensor = Tensor::<B, 1, Int>::from_floats(action_batch, device);
-    // let reward_tensor = Tensor::<B, 1>::from_floats(reward_batch, device);
-    let flattened_states: Vec<f32> = state_batch_vecs.into_iter().flatten().collect();
-
-    let observation_space_size = policy_net.linear1.weight.dims()[1]; // Get input_shape from the model's first layer
-
-    let state_data = TensorData::new(
-        flattened_states,
-        [dqn_agent.batch_size, observation_space_size],
-    );
-    let state_tensor = Tensor::<B, 2>::from_data(state_data, device);
-    // Forward pass through the DQN model
-    let q_values = policy_net.forward(state_tensor);
-
-    // let state_action_values = select_actions(q_values, action_tensor.clone());
-
-    // let next_q_values = target_net.forward(next_state_tensor.clone());
-    // let next_state_max = next_q_values.max_dim(1);
-    // let done_mask = Tensor::<B, 1, Bool>::from_floats(done_mask_as_u8, device);
-    // let expected_state_action_values =
-    //     reward_tensor.clone() + (next_state_max * dqn_agent.gamma) * done_mask.not();
-
-    // let loss = MSELoss::default().forward(
-    //     state_action_values.unsqueeze(),
-    //     expected_state_action_values.unsqueeze(),
-    // );
-
-    // optimizer.backward_step(&loss);
 }
